@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<!--[if lt IE 7]>
+<html class="no-js lt-ie9 lt-ie8 lt-ie7" ng-app="myApp"> <![endif]-->
+<!--[if IE 7]>
+<html class="no-js lt-ie9 lt-ie8" ng-app="myApp"> <![endif]-->
+<!--[if IE 8]>
+<html class="no-js lt-ie9" ng-app="myApp"> <![endif]-->
+<!--[if gt IE 8]><!-->
+<html class="no-js" ng-app="myApp"> <!--<![endif]-->
+<head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+	<title></title>
+	<meta name="description" content="">
+	<meta name="viewport" content="width=device-width">
+
+	<script type="text/javascript" src="http://code.angularjs.org/1.2.9/angular.min.js"></script>
+	<style>
+
+		li {
+			margin-left: 20px;
+		}
+
+	</style>
+
+
+</head>
+<body>
+
+<script type="text/ng-template" id="tree_item_renderer.html">
+
+	<div style="display:none;" ng-init="idindex[data.id]=data"></div>
+
+	<div ng-if="data.collapsed">
+		<button ng-click="load(idindex, data)">{{data.text}}</button>
+	</div>
+	<div ng-if="!data.collapsed">
+		{{data.id}}
+		<div ng-if="!data.mode">
+			{{data.text}}
+			<button ng-click="answer(data)">Answer</button>
+			<button ng-click="edit(data)">Edit</button>
+		</div>
+		<div ng-if="data.mode=='edit' || data.mode=='answer'">
+			<input ng-model="data.text"/>
+			<button ng-click="save(data)">Save</button>
+			<button ng-if="data.mode=='edit'" ng-click="cancelEdit(data)">Cancel</button>
+			<button ng-if="data.mode=='answer'" ng-click="cancelAnswer(idindex, data)">Cancel</button>
+		</div>
+		<ul>
+			<li ng-repeat="data in data.nodes" ng-include="'tree_item_renderer.html'"></li>
+		</ul>
+	</div>
+
+
+</script>
+
+
+<div ng-controller="TreeController">
+	Root node
+
+	<div style="display:none;" ng-init="idindex[data.id]=data"></div>
+
+	<button ng-click="answer(data)">Answer</button>
+
+	<ul>
+		<li ng-repeat="data in data.nodes" ng-include="'tree_item_renderer.html'"></li>
+	</ul>
+
+	data:{{data}}
+	<br/>
+	<br/>
+	idindex:{{idindex}}
+</div>
+
+
+<script>
+
+	Array.prototype.remove = function (from, to) {
+		var rest = this.slice((to || from) + 1 || this.length);
+		this.length = from < 0 ? this.length + from : from;
+		return this.push.apply(this, rest);
+	};
+
+	angular.module("myApp", []).
+			controller("TreeController", ['$scope', function ($scope) {
+
+				$scope.removeNode = function (idindex, data) {
+					var parentid = data.id.split('.');
+					parentid.pop();
+					var parent = idindex[parentid.join('.')];
+					for (var i = 0, found = false; i < parent.nodes.length && !found; i++) {
+
+						if (parent.nodes[i] === data) {
+							parent.nodes.remove(i);
+							found = true;
+						}
+					}
+				};
+
+				$scope.edit = function (data) {
+					data.oldtext = data.text
+					data.mode = "edit"
+				};
+				$scope.cancelEdit = function (data) {
+					data.text = data.oldtext;
+					delete data.mode;
+				};
+				$scope.cancelAnswer = function (idindex, data) {
+					$scope.removeNode(idindex, data);
+				};
+
+				$scope.load = function (idindex, data) {
+
+					var parentid = data.id.split('.');
+					parentid.pop();
+					var parent = idindex[parentid.join('.')];
+
+					parent.nodes.push({id: parent.id + ".0", text: "Loaded comment 1", "collapsed": false, nodes: []});
+					parent.nodes.push({id: parent.id + ".1", text: "Loaded comment 2", "collapsed": false, nodes: []});
+
+					$scope.removeNode(idindex, data);
+
+				};
+
+				$scope.save = function (data) {
+					// send to server
+					delete data.mode;
+				};
+
+				$scope.answer = function (data) {
+					var newName = data.id + '.' + data.nodes.length;
+					data.nodes.push({id: newName, text: "", "collapsed": false, mode: 'answer', nodes: []});
+				};
+
+				$scope.data = {id: "0", nodes: [
+					{id: "0.0", text: "First comment", "collapsed": false, nodes: [
+						{id: "0.0.*", text: "View 2 messages", "collapsed": true, nodes: []}
+
+					]}
+				]};
+
+				$scope.idindex = {};
+
+
+				$scope.change = function (data) {
+					console.log(data);
+				};
+			}]);
+
+</script>
+</body>
+</html>

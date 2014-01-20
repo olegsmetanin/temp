@@ -3,6 +3,5 @@
 .idea
 dist
 tmp
-vendor
 node_modules
 npm-debug.log

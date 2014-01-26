@@ -51,7 +51,8 @@ object PingPong {
 
     import system.dispatcher
     system.scheduler.scheduleOnce(1.second) {
-      pingActor ! WarmUp
+      println("Start warming")
+      pingActor ! PingThemAll
     }
 
   }
@@ -74,8 +75,6 @@ case class Pong(id: Long, tick: Long)
 
 case class Save()
 
-case class WarmUp()
-
 case class PingThemAll()
 
 case class StartUp()
@@ -83,8 +82,7 @@ case class StartUp()
 
 class PingActor extends Actor {
 
-  val pingCounter = new AtomicLong(0)
-  val pongCounter = new AtomicLong(0)
+  val pingCounter = new AtomicLong(PingPongParam.maxRequest)
   val pongActor = context.actorSelection("akka.tcp://PongSystem@" + PingPongParam.pongHostname + ":2553/user/pongActor")
 
   private val store = new ConcurrentLinkedHashMap.Builder[Long, (Long, Long)]
@@ -92,78 +90,72 @@ class PingActor extends Actor {
     .maximumWeightedCapacity(2000000)
     .build()
 
-  var startTime = System.nanoTime()
+  sealed trait State
+  case class Warming() extends State
+  case class Recording() extends State
+  case class Waiting() extends State
 
-  var isOver = false
+  var state:State = Warming()
+  var recordTime = System.nanoTime()
 
   def receive = {
 
-    case WarmUp => {
-      println("WarmUp")
+    case PingThemAll => {
       for (i <- 0 to PingPongParam.concurrency) {
         pongActor ! Ping(pingCounter.incrementAndGet(), System.nanoTime())
       }
     }
-    case Pong(id: Long, tick: Long) => {
-      val c = pongCounter.incrementAndGet()
-      if (!isOver) {
-        if (c > PingPongParam.warmupRequest - PingPongParam.concurrency) {
-          isOver = true
 
-          import scala.concurrent.ExecutionContext.Implicits.global
-          context.system.scheduler.scheduleOnce(5.second) {
-            context.become(record)
-            self ! PingThemAll
-          }
-        } else {
+    case Pong(id: Long, tick: Long) => {
+      (id, state) match {
+        case (id, Recording()) if id <= PingPongParam.maxRequest => {
+          store.put(id, (tick, System.nanoTime()))
           pongActor ! Ping(pingCounter.incrementAndGet(), System.nanoTime())
         }
-      }
-    }
-  }
-
-  def record: Receive = {
-
-    case PingThemAll => {
-      println("PingThemAll")
-      pingCounter.set(0)
-      pongCounter.set(0)
-      isOver = false
-
-      for (i <- 0 to PingPongParam.concurrency) {
-        pongActor ! Ping(pingCounter.incrementAndGet(), System.nanoTime())
-      }
-    }
-
-    case Pong(id: Long, tick: Long) => {
-      store.put(id, (tick, System.nanoTime()))
-      val c = pongCounter.incrementAndGet()
-      if (!isOver) {
-        if (c > PingPongParam.maxRequest - PingPongParam.concurrency) {
-          isOver = true
+        case (id, Recording()) if id > PingPongParam.maxRequest => {
+          state = Waiting()
+          // Wait 10 sec after recording and exit
           import scala.concurrent.ExecutionContext.Implicits.global
-          context.system.scheduler.scheduleOnce(5.second) {
+          context.system.scheduler.scheduleOnce(10.second) {
+            println("Start saving")
+            pingCounter.set(0)
             self ! Save
           }
-        } else {
+        }
+        case (id, Warming()) if (id <= PingPongParam.maxRequest + PingPongParam.warmupRequest) => {
           pongActor ! Ping(pingCounter.incrementAndGet(), System.nanoTime())
         }
+        case (id, Warming()) if (id > PingPongParam.maxRequest + PingPongParam.warmupRequest) => {
+          state = Waiting()
+          // Wait 10 sec after warmup and start pinging again
+          import scala.concurrent.ExecutionContext.Implicits.global
+          context.system.scheduler.scheduleOnce(10.second) {
+            println("Start recording")
+            state = Recording()
+            pingCounter.set(0)
+            recordTime = System.nanoTime()
+            self ! PingThemAll
+          }
+        }
+        case _ =>
       }
     }
 
     case Save => {
       import collection.JavaConversions._
-      val pw = new java.io.PrintWriter("stat.txt")
-      store.descendingMap() foreach {
-        case (k, v) => pw.println(k.toString + "," + ((v._2 - v._1) / 1000000).toString + "," + v._1.toString + "," + v._2.toString)
+      val pw = new java.io.PrintWriter("stat/stat"+PingPongParam.concurrency.toString+".csv")
+      pw.println("id,time,latency,concurrency")
+      store.ascendingMap() foreach {
+        case (k, v) => pw.println(
+          k.toString + "," +
+          ((v._2-recordTime).toFloat / 1000000000).toString + ","+
+          ((v._2 - v._1).toFloat / 1000000).toString+","+
+          PingPongParam.concurrency.toString
+        )
       }
       pw.close()
       println("Saved")
-
-      import scala.concurrent.ExecutionContext.Implicits.global
-      context.system.scheduler.scheduleOnce(10.second) {
-        context.system.shutdown
-      }
+      context.system.shutdown
     }
 
   }
@@ -174,7 +166,7 @@ class PingActor extends Actor {
 class PongActor extends Actor {
 
   def receive = {
-    case StartUp => println("StartUp " + self.toString)
+    case StartUp => println("Started " + self.toString)
     case Ping(id: Long, tick: Long) =>
       sender ! Pong(id, tick)
   }

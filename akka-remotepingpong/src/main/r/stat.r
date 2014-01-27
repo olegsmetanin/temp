@@ -7,14 +7,10 @@ fi["conc"] <- NA
 
 fi$conc <-  sub("./stat/stat([0-9]+).csv", "\\1", fi$filename ,perl=TRUE)
 
-alldata <- data.frame(id= integer(0), time =numeric(0), latency=numeric(0), concurrency=integer(0))
-
 for (i in 1:length(fi$filename)) {
 
     data <- read.table(toString(fi$filename[i]), header=TRUE,
          sep=",", col.names=c("id", "time", "latency", "concurrency"))
-
-    alldata <- rbind(alldata,  data)
 
     concurrency <- fi$conc[i]
 
@@ -22,34 +18,35 @@ for (i in 1:length(fi$filename)) {
 
     quant <- quantile(data$latency, c(0.99))
 
-    lvt <- subset(data, latency > quant[1], select=c("time","latency"))
-
-    olvt <- lvt[order(lvt$time),]
-
     baselatency <- subset(data, latency <= quant[1], select=c(latency))
 
     slowlatency <- subset(data, latency > quant[1], select=c(latency))
 
-    svg(paste("./stat/plot",toString(concurrency),".svg", sep = ""))
+    png(paste("./stat/plot",toString(concurrency),".png", sep = ""), width = 600, height = 800, res=120)
 
     par(mfrow=c(3,1))
 
+
+
     plot(
-        olvt$time,
-        olvt$latency,
-        type="h",
+        data$time,
+        data$latency,
+        type="l",
         main="Latency in time",
         ylab="Latency, ms",
         xlab="Time from start, s"
         )
 
+
+    ##par(mar = c(0, 0,2, 0))
+    par(xpd=NA)
     hist(
         baselatency$latency,
         main = "Histogram of remote actor latency, 99% of requests",
         xlab = "Latency, ms",
         yaxt = "n",
         sub = paste("requests latency <= ",toString(quant[1])," ms", sep = ""),
-        breaks = 10,
+        breaks = 9,
         labels = TRUE,
         freq = TRUE
         )
@@ -92,7 +89,17 @@ for (i in 1:length(fi$filename)) {
 
 }
 
-svg(paste("./stat/plot.svg"))
+alldata <- data.frame(id= integer(0), time =numeric(0), latency=numeric(0), concurrency=integer(0))
+
+for (i in 1:length(fi$filename)) {
+
+    data <- read.table(toString(fi$filename[i]), header=TRUE,
+         sep=",", col.names=c("id", "time", "latency", "concurrency"))
+
+    alldata <- rbind(alldata,  data)
+}
+
+png(paste("./stat/plot.png"), width = 600, height = 600, res = 120)
 
 boxplot(latency~concurrency,data=alldata, main="Latency versus Concurrency",
   	 xlab="Concurrency, number of parallel requests", ylab="Latency, ms", log = "y", outline=FALSE)

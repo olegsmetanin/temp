@@ -18,3 +18,5 @@ target/
 .Rapp.history
 stat/*.csv
 stat/*.svg
+stat/*.png
+sbt-launch.jar

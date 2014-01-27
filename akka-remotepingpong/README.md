@@ -1,7 +1,7 @@
 Akka-remotingpingpong
 ====
 
-sbt "run-main sample.rpingpong.PingPong pong"
+sbt "run-main sample.remote.pingpong.PingPong pong"
 
 sbt "run-main sample.remote.pingpong.PingPong ping localhost 10 10000 1000000"
 

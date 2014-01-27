@@ -14,6 +14,7 @@ import akka.actor.Props
 import akka.actor.Props
 import java.util.concurrent.atomic.{AtomicLong}
 import akka.actor.PoisonPill
+import com.typesafe.config.ConfigFactory
 
 
 object PingPongParam {
@@ -42,9 +43,34 @@ object PingPong {
     }
   }
 
+  def config(ip: String, port: Int) = {
+    s"""
+     akka {
+
+       actor {
+         provider = "akka.remote.RemoteActorRefProvider"
+       }
+
+       remote {
+         netty.tcp {
+           hostname = "$ip"
+           port = $port
+         }
+       }
+
+     }
+
+     """
+  }
+
+
+  val ip = java.net.InetAddress.getLocalHost().getHostAddress()
+
   def startPingSystem(): Unit = {
 
-    val system = ActorSystem("PingSystem", ConfigFactory.load("ping"))
+    val customConf = ConfigFactory.parseString(config(ip, 2552))
+
+    val system = ActorSystem("PingSystem", ConfigFactory.load(customConf))
     val pingActor = system.actorOf(Props(classOf[PingActor]), "pingActor")
 
     println("Started PingSystem")
@@ -60,10 +86,16 @@ object PingPong {
 
   def startPongSystem(): Unit = {
 
-    val system = ActorSystem("PongSystem", ConfigFactory.load("pong"))
+    val customConf = ConfigFactory.parseString(config(ip, 2553))
+
+    val system = ActorSystem("PongSystem", ConfigFactory.load(customConf))
     val pongActor = system.actorOf(Props(classOf[PongActor]), "pongActor")
 
-    println("Started PongSystem")
+    println("Started PongSystem on " + ip)
+    println( s"""
+Now run sbt "run-main sample.remote.pingpong.PingPong ping $ip 10 10000 1000000" on other computer
+     """)
+
     pongActor ! StartUp
   }
 
@@ -91,11 +123,14 @@ class PingActor extends Actor {
     .build()
 
   sealed trait State
+
   case class Warming() extends State
+
   case class Recording() extends State
+
   case class Waiting() extends State
 
-  var state:State = Warming()
+  var state: State = Warming()
   var recordTime = System.nanoTime()
 
   def receive = {
@@ -143,14 +178,14 @@ class PingActor extends Actor {
 
     case Save => {
       import collection.JavaConversions._
-      val pw = new java.io.PrintWriter("stat/stat"+PingPongParam.concurrency.toString+".csv")
+      val pw = new java.io.PrintWriter("stat/stat" + PingPongParam.concurrency.toString + ".csv")
       pw.println("id,time,latency,concurrency")
       store.ascendingMap() foreach {
         case (k, v) => pw.println(
           k.toString + "," +
-          ((v._2-recordTime).toFloat / 1000000000).toString + ","+
-          ((v._2 - v._1).toFloat / 1000000).toString+","+
-          PingPongParam.concurrency.toString
+            ((v._2 - recordTime).toFloat / 1000000000).toString + "," +
+            ((v._2 - v._1).toFloat / 1000000).toString + "," +
+            PingPongParam.concurrency.toString
         )
       }
       pw.close()

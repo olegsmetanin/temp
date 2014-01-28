@@ -1,109 +1,14 @@
-/**
- * Copyright (C) 2014 Oleg Smetanin
- */
 package sample.remote.pingpong
-
 
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap
 import scala.concurrent.duration._
-import com.typesafe.config.ConfigFactory
-import akka.actor.ActorSystem
 import akka.actor.Actor
-import akka.actor.ActorRef
-import akka.actor.Props
-import akka.actor.Props
 import java.util.concurrent.atomic.{AtomicLong}
-import akka.actor.PoisonPill
-import com.typesafe.config.ConfigFactory
 
-
-object PingPongParam {
-  var concurrency = 100
-  var warmupRequest = 1000
-  var maxRequest = 10000
-  var pongHostname = "localhost"
-}
-
-object PingPong {
-
-  def main(args: Array[String]): Unit = {
-
-    args.toList match {
-      case "ping" :: host :: conc :: warmup :: max :: xs => {
-        PingPongParam.pongHostname = host
-        PingPongParam.concurrency = conc.toInt
-        PingPongParam.warmupRequest = warmup.toInt
-        PingPongParam.maxRequest = max.toInt
-        startPingSystem()
-      }
-      case "pong" :: xs => {
-        startPongSystem()
-      }
-      case _ => println("nonvalid arg")
-    }
-  }
-
-  def config(ip: String, port: Int) = {
-    s"""
-     akka {
-
-       actor {
-         provider = "akka.remote.RemoteActorRefProvider"
-       }
-
-       remote {
-         netty.tcp {
-           hostname = "$ip"
-           port = $port
-         }
-       }
-
-     }
-
-     """
-  }
-
-
-  val ip = java.net.InetAddress.getLocalHost().getHostAddress()
-
-  def startPingSystem(): Unit = {
-
-    val customConf = ConfigFactory.parseString(config(ip, 2552))
-
-    val system = ActorSystem("PingSystem", ConfigFactory.load(customConf))
-    val pingActor = system.actorOf(Props(classOf[PingActor]), "pingActor")
-
-    println("Started PingSystem")
-
-    import system.dispatcher
-    system.scheduler.scheduleOnce(1.second) {
-      println("Start warming")
-      pingActor ! PingThemAll
-    }
-
-  }
-
-
-  def startPongSystem(): Unit = {
-
-    val customConf = ConfigFactory.parseString(config(ip, 2553))
-
-    val system = ActorSystem("PongSystem", ConfigFactory.load(customConf))
-    val pongActor = system.actorOf(Props(classOf[PongActor]), "pongActor")
-
-    println("Started PongSystem on " + ip)
-    println( s"""
-Now run sbt "run-main sample.remote.pingpong.PingPong ping $ip 10 10000 1000000" on other computer
-     """)
-
-    pongActor ! StartUp
-  }
-
-}
 
 case class Ping(id: Long, tick: Long)
 
-case class Pong(id: Long, tick: Long)
+case class Pong(id: Long, tick: Long, pongRcvMailBoxSize: Int)
 
 case class Save()
 
@@ -117,7 +22,7 @@ class PingActor extends Actor {
   val pingCounter = new AtomicLong(PingPongParam.maxRequest)
   val pongActor = context.actorSelection("akka.tcp://PongSystem@" + PingPongParam.pongHostname + ":2553/user/pongActor")
 
-  private val store = new ConcurrentLinkedHashMap.Builder[Long, (Long, Long)]
+  private val store = new ConcurrentLinkedHashMap.Builder[Long, (Long, Long, Int, Int)]
     .initialCapacity(1000000)
     .maximumWeightedCapacity(2000000)
     .build()
@@ -137,15 +42,21 @@ class PingActor extends Actor {
 
     case PingThemAll => {
       for (i <- 0 to PingPongParam.concurrency) {
-        pongActor ! Ping(pingCounter.incrementAndGet(), System.nanoTime())
+        pongActor ! Ping(
+          pingCounter.incrementAndGet(),
+          System.nanoTime()
+        )
       }
     }
 
-    case Pong(id: Long, tick: Long) => {
+    case Pong(id: Long, tick: Long, pongRcvMailBoxSize) => {
       (id, state) match {
         case (id, Recording()) if id <= PingPongParam.maxRequest => {
-          store.put(id, (tick, System.nanoTime()))
-          pongActor ! Ping(pingCounter.incrementAndGet(), System.nanoTime())
+          store.put(id, (tick, System.nanoTime(), pongRcvMailBoxSize, MetricsMailboxExtension(context.system).mailboxSize(self)))
+          pongActor ! Ping(
+            pingCounter.incrementAndGet(),
+            System.nanoTime()
+          )
         }
         case (id, Recording()) if id > PingPongParam.maxRequest => {
           state = Waiting()
@@ -158,7 +69,10 @@ class PingActor extends Actor {
           }
         }
         case (id, Warming()) if (id <= PingPongParam.maxRequest + PingPongParam.warmupRequest) => {
-          pongActor ! Ping(pingCounter.incrementAndGet(), System.nanoTime())
+          pongActor ! Ping(
+            pingCounter.incrementAndGet(),
+            System.nanoTime()
+          )
         }
         case (id, Warming()) if (id > PingPongParam.maxRequest + PingPongParam.warmupRequest) => {
           state = Waiting()
@@ -179,12 +93,14 @@ class PingActor extends Actor {
     case Save => {
       import collection.JavaConversions._
       val pw = new java.io.PrintWriter("stat/stat" + PingPongParam.concurrency.toString + ".csv")
-      pw.println("id,time,latency,concurrency")
+      pw.println("id,time,latency,pongrcvmailboxsize,pingrcvmailboxsize,concurrency")
       store.ascendingMap() foreach {
         case (k, v) => pw.println(
           k.toString + "," +
             ((v._2 - recordTime).toFloat / 1000000000).toString + "," +
             ((v._2 - v._1).toFloat / 1000000).toString + "," +
+            v._3.toString + "," +
+            v._4.toString + "," +
             PingPongParam.concurrency.toString
         )
       }
@@ -203,7 +119,7 @@ class PongActor extends Actor {
   def receive = {
     case StartUp => println("Started " + self.toString)
     case Ping(id: Long, tick: Long) =>
-      sender ! Pong(id, tick)
+      sender ! Pong(id, tick, MetricsMailboxExtension(context.system).mailboxSize(self))
   }
 
 }
